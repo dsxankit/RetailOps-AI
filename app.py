@@ -1,10 +1,11 @@
-import pathlib
+from pathlib import Path
 
 import streamlit as st
 
 from ai import ask_sop_assistant, load_sops
+from routing import classify_issue
 
-BASE_DIR = pathlib.Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent
 SOP_DIR = BASE_DIR / "sops"
 
 st.set_page_config(
@@ -24,7 +25,7 @@ def main():
     # Load SOP documents using absolute path
     try:
         sop_context, loaded_files = load_sops(SOP_DIR)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         st.error(f"Error loading SOP files: {e}")
         st.stop()
 
@@ -90,6 +91,45 @@ def main():
                     st.session_state.messages.append({"role": "assistant", "content": answer})
                 except Exception as e:
                     st.error(f"Failed to communicate with Gemini API: {e}")
+
+    # Objective 3: Operational Issue Classification & Routing Form
+    st.divider()
+    st.subheader("Report an Operational Issue")
+
+    with st.form("issue_classification_form"):
+        description = st.text_area(
+            "Describe the operational problem",
+            placeholder="Example: A customer wants to return a damaged item without a receipt.",
+            height=100,
+        )
+        submitted = st.form_submit_button("Classify Issue")
+
+    if submitted:
+        if not description.strip():
+            st.warning("Please enter an issue description.")
+        else:
+            st.session_state["classification"] = classify_issue(description)
+
+    if "classification" in st.session_state:
+        result = st.session_state["classification"]
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**Category:** {result['category']}")
+            st.markdown(f"**Responsible:** {result['assigned_to']}")
+        with col2:
+            st.markdown(f"**Issue Type:** {result['issue_type']}")
+            sources_str = ", ".join(result["sources"]) if result["sources"] else "None"
+            st.markdown(f"**SOP Sources:** {sources_str}")
+
+        st.markdown("**Recommended Actions:**")
+        for action in result["actions"]:
+            st.write("-", action)
+
+        if result["requires_review"]:
+            st.warning("Manual review required.")
+        else:
+            st.success("Classification completed.")
 
 
 if __name__ == "__main__":
