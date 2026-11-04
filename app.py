@@ -1,34 +1,43 @@
-import os
-from pathlib import Path
+import pathlib
+
 import streamlit as st
-from ai import load_sops, ask_sop_assistant
+
+from ai import ask_sop_assistant, load_sops
+
+BASE_DIR = pathlib.Path(__file__).resolve().parent
+SOP_DIR = BASE_DIR / "sops"
 
 st.set_page_config(
-    page_title="RetailOps Assistant",
+    page_title="RetailOps AI (Demo)",
     page_icon="🛍️",
     layout="centered",
 )
 
+
 def main():
     st.title("🛍️ RetailOps Store Assistant")
-    st.caption("Ask questions about store policies, returns, billing, and inventory.")
+    st.caption(
+        "Independent demonstration project: AI-powered retail operations assistant "
+        "for store policies, returns, billing, and inventory."
+    )
 
-    # Load SOP documents fresh on each run (no @st.cache_data so edits apply immediately)
+    # Load SOP documents using absolute path
     try:
-        sop_context, loaded_files = load_sops("sops")
+        sop_context, loaded_files = load_sops(SOP_DIR)
     except Exception as e:
         st.error(f"Error loading SOP files: {e}")
         st.stop()
 
-    # Sidebar showing active SOP sources and checking if any file is empty
+    # Sidebar showing active SOP sources and checking file sizes via absolute paths
     with st.sidebar:
         st.header("📄 Loaded SOP Documents")
         for filename in loaded_files:
-            file_size = Path("sops", filename).stat().st_size
+            file_path = SOP_DIR / filename
+            file_size = file_path.stat().st_size if file_path.exists() else 0
             status = f"✅ ({file_size} bytes)" if file_size > 0 else "⚠️ EMPTY (0 bytes)"
             st.markdown(f"- `{filename}` — {status}")
 
-        if not sop_context.strip() or all(Path("sops", f).stat().st_size == 0 for f in loaded_files):
+        if not sop_context.strip() or all((SOP_DIR / f).stat().st_size == 0 for f in loaded_files):
             st.error("Your `sops/*.md` files are empty! Paste the SOP text into them and save.")
 
         st.divider()
@@ -81,6 +90,7 @@ def main():
                     st.session_state.messages.append({"role": "assistant", "content": answer})
                 except Exception as e:
                     st.error(f"Failed to communicate with Gemini API: {e}")
+
 
 if __name__ == "__main__":
     main()
