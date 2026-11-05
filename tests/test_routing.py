@@ -64,6 +64,14 @@ class TestIssueClassification(unittest.TestCase):
     def test_empty_description_raises_value_error(self):
         with self.assertRaises(ValueError):
             classify_issue("   ")
+            
+    def test_return_without_original_tags(self):
+        result = classify_issue("A customer want to return item without it's tag")
+        self.assertEqual(result["category"], "Returns")
+        self.assertEqual(result["issue_type"], "Missing Original Tags")
+        self.assertEqual(result["assigned_to"], "Unassigned")
+        self.assertEqual(result["matched_rules"], ["RETURN_MISSING_TAGS"])
+        self.assertTrue(result["requires_review"])
 
 
 if __name__ == "__main__":

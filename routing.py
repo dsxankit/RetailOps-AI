@@ -10,7 +10,15 @@ def classify_issue(description: str) -> dict:
 
     matches = []
 
-    def add(rule_id: str, category: str, issue_type: str, assigned_to: str, action: str, source: str):
+    def add(
+        rule_id: str,
+        category: str,
+        issue_type: str,
+        assigned_to: str,
+        action: str,
+        source: str,
+        requires_review: bool = False,
+    ):
         matches.append({
             "rule_id": rule_id,
             "category": category,
@@ -18,6 +26,7 @@ def classify_issue(description: str) -> dict:
             "assigned_to": assigned_to,
             "action": action,
             "source": source,
+            "requires_review": requires_review,
         })
 
     # 1. Detect return-related incidents
@@ -25,7 +34,7 @@ def classify_issue(description: str) -> dict:
     no_receipt = bool(
         re.search(
             r"\b(?:without|no|missing|lost)\s+"
-            r"(?:(?:a|the|my|valid)\s+)?"
+            r"(?:(?:a|the|my|its|it's|their|valid|original)\s+)*"
             r"(?:receipt|invoice|bill)\b",
             text,
         )
@@ -39,6 +48,26 @@ def classify_issue(description: str) -> dict:
             "Store Manager",
             "Escalate the request. Cashier cannot process it.",
             "returns.md Section 1",
+        )
+
+    no_tags = bool(
+        re.search(
+            r"\b(?:without|no|missing|lost|removed|detached)\s+"
+            r"(?:(?:a|the|my|its|it's|their|original|price)\s+)*"
+            r"(?:tag|tags|label|labels|packaging)\b",
+            text,
+        )
+    )
+
+    if is_return and no_tags:
+        add(
+            "RETURN_MISSING_TAGS",
+            "Returns",
+            "Missing Original Tags",
+            "Unassigned",
+            "Explain the standard eligibility requirement (original tags, labels, and packaging must be intact); refer exceptions for manual review.",
+            "returns.md Section 1",
+            requires_review=True,
         )
 
     damaged = any(word in text for word in ("damaged", "defective"))
@@ -109,12 +138,16 @@ def classify_issue(description: str) -> dict:
         }
 
     # 6. Single-category match (supports 1 or more rules within the same category)
+    assigned_roles = [m["assigned_to"] for m in matches if m["assigned_to"] != "Unassigned"]
+    assigned_to_str = "; ".join(dict.fromkeys(assigned_roles)) if assigned_roles else "Unassigned"
+    requires_review = any(m["requires_review"] for m in matches) or (assigned_to_str == "Unassigned")
+
     return {
         "category": matches[0]["category"],
         "issue_type": " / ".join(m["issue_type"] for m in matches),
-        "assigned_to": "; ".join(dict.fromkeys(m["assigned_to"] for m in matches)),
+        "assigned_to": assigned_to_str,
         "actions": [m["action"] for m in matches],
         "sources": list(dict.fromkeys(m["source"] for m in matches)),
         "matched_rules": [m["rule_id"] for m in matches],
-        "requires_review": False,
+        "requires_review": requires_review,
     }

@@ -1,8 +1,14 @@
 from pathlib import Path
-
 import streamlit as st
-
-from ai import ask_sop_assistant, load_sops
+from ai import load_sops, ask_sop_assistant
+from database import (
+    STATUSES,
+    create_ticket,
+    get_ticket,
+    init_db,
+    list_tickets,
+    update_ticket_status,
+)
 from routing import classify_issue
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -16,6 +22,8 @@ st.set_page_config(
 
 
 def main():
+    init_db()
+
     st.title("🛍️ RetailOps Store Assistant")
     st.caption(
         "Independent demonstration project: AI-powered retail operations assistant "
@@ -25,7 +33,7 @@ def main():
     # Load SOP documents using absolute path
     try:
         sop_context, loaded_files = load_sops(SOP_DIR)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         st.error(f"Error loading SOP files: {e}")
         st.stop()
 
@@ -90,9 +98,9 @@ def main():
                     st.markdown(answer)
                     st.session_state.messages.append({"role": "assistant", "content": answer})
                 except Exception as e:
-                    st.error(f"Failed to communicate with Gemini API: {e}")
+                    st.error(f"Failed to communicate with local Ollama model: {e}")
 
-    # Objective 3: Operational Issue Classification & Routing Form
+    # Objective 3 & 4: Operational Issue Classification & Ticket Confirmation
     st.divider()
     st.subheader("Report an Operational Issue")
 
@@ -106,9 +114,15 @@ def main():
 
     if submitted:
         if not description.strip():
-            st.warning("Please enter an issue description.")
+            st.warning("Please describe the issue.")
+            st.session_state.pop("pending_ticket", None)
         else:
-            st.session_state["classification"] = classify_issue(description)
+            result = classify_issue(description)
+            st.session_state["classification"] = result
+            st.session_state["pending_ticket"] = {
+                "description": description.strip(),
+                "result": result,
+            }
 
     if "classification" in st.session_state:
         result = st.session_state["classification"]
@@ -130,6 +144,88 @@ def main():
             st.warning("Manual review required.")
         else:
             st.success("Classification completed.")
+
+    # Show ticket creation banner after Streamlit rerun
+    created_id = st.session_state.pop("created_ticket_id", None)
+    if created_id is not None:
+        st.success(f"Ticket #{created_id} created successfully.")
+
+    # Explicit confirmation step before saving to SQLite
+    if "pending_ticket" in st.session_state:
+        pending = st.session_state["pending_ticket"]
+        result = pending["result"]
+
+        st.subheader("Confirm Ticket Creation")
+        st.write("**Problem:**", pending["description"])
+        st.write("**Category:**", result["category"])
+        st.write("**Issue Type:**", result["issue_type"])
+        st.write("**Assigned To:**", result["assigned_to"])
+
+        if result["requires_review"]:
+            st.warning(
+                "This issue requires manual review. "
+                "It will be saved without an assigned owner."
+            )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Create Ticket", type="primary", use_container_width=True):
+                try:
+                    ticket_id = create_ticket(pending["description"], result)
+                    del st.session_state["pending_ticket"]
+                    st.session_state["created_ticket_id"] = ticket_id
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ticket creation failed: {e}")
+
+        with col2:
+            if st.button("Cancel", use_container_width=True):
+                del st.session_state["pending_ticket"]
+                st.rerun()
+
+    # Objective 4: Ticket Management Section
+    st.divider()
+    st.subheader("Ticket Management")
+
+    tickets = list_tickets()
+    if not tickets:
+        st.info("No tickets have been created yet.")
+    else:
+        st.dataframe(
+            tickets,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        tickets_by_id = {ticket["id"]: ticket for ticket in tickets}
+        selected_id = st.selectbox(
+            "Select Ticket",
+            options=list(tickets_by_id),
+            format_func=lambda ticket_id: (
+                f"#{ticket_id} - {tickets_by_id[ticket_id]['issue_type']}"
+            ),
+        )
+
+        selected_ticket = get_ticket(selected_id)
+        if selected_ticket:
+            st.write("**Current Status:**", selected_ticket["status"])
+            st.write("**Assigned To:**", selected_ticket["assigned_to"])
+
+            with st.form("update_status_form"):
+                current_index = STATUSES.index(selected_ticket["status"])
+                new_status = st.selectbox(
+                    "New Status",
+                    options=STATUSES,
+                    index=current_index,
+                )
+                update_clicked = st.form_submit_button("Update Ticket Status")
+
+            if update_clicked:
+                updated = update_ticket_status(selected_id, new_status)
+                if updated:
+                    st.rerun()
+                else:
+                    st.error("Ticket was not found.")
 
 
 if __name__ == "__main__":
